@@ -6,11 +6,11 @@
 # Change 1..1 below to 1..last_test_to_print .
 # (It may become useful if the test is moved to ./t subdirectory.)
 
-BEGIN { $| = 1; print "1..21\n"; }
+BEGIN { $| = 1; print "1..24\n"; }
 END {print "not ok 1\n" unless $loaded;}
 use Text::FillIn;
 $loaded = 1;
-print "ok 1\n";
+&report(1);
 
 ######################### End of black magic.
 
@@ -18,10 +18,9 @@ print "ok 1\n";
 # (correspondingly "not ok 13") depending on the success of chunk 13
 # of the test code):
 
-sub report_result {
-	$TEST_NUM ||= 2; 
-	print ( $_[0] ? "ok $TEST_NUM\n" : "not ok $TEST_NUM\n" );
+sub report {
 	$TEST_NUM++;
+	print ( $_[0] ? "ok $TEST_NUM\n" : "not ok $TEST_NUM\n" );
 }
 
 # The variables for interpolation
@@ -30,9 +29,6 @@ $TVars{'nestedtext'} = 'coconuts';
 $TVars{'more_var'} = 'donuts';
 $TVars{'var2'} = 'nested';
 $TVars{'text\\]]'} = 'garbage';
-
-#@TVars{'var',  'nestedtext', 'more_var', 'var2',   'text\\]]'} =
-#      ('text', 'coconuts',   'donuts',   'nested', 'garbage');
 
 # 2,3
 &test_both('some [[$var]] and so on' => 'some text and so on');
@@ -67,11 +63,26 @@ $TVars{'text\\]]'} = 'garbage';
 # 20,21
 &test_both('Pi is about [[&add_numbers(3,.1,.04,.001,.0006)]]' => 'Pi is about 3.1416');
 
+# 22,24
+{
+	my $t = new Text::FillIn('some [[$var} unbalanced');
+	$t->Rdelim('}');
+	&report($t->interpret() eq 'some text unbalanced');
+
+	$t = new Text::FillIn('some {$var]] unbalanced');
+	$t->Ldelim('{');
+	&report($t->interpret() eq 'some text unbalanced');
+	
+	Text::FillIn->Ldelim('(');
+	$t = new Text::FillIn('some ($var]] unbalanced');
+	&report($t->interpret() eq 'some text unbalanced');
+}
+
 ###################################################################
 
 sub test_both {
    &test_interpret(@_);
-   &test_interpret(@_);
+   &test_print(@_);
 }
 
 sub test_interpret {
@@ -82,27 +93,27 @@ sub test_interpret {
 
    print ("--$TEST_NUM--\n$raw_text\n--$TEST_NUM--\n$result\n") if $debug;
 
-   &report_result( $result eq $cooked_text );
+   &report( $result eq $cooked_text );
 }
 
 sub test_print {
    my $debug = 0;
    my ($raw_text, $cooked_text) = @_;
    my $template = new Text::FillIn($raw_text);
-   my $file = '/tmp/template_test';
+   my $file = 'output_test';
    
-   open (TEMP, ">$file") or die $!;
+   open (TEMP, ">$file") or die "Couldn't create $file: $!";
    my $prev_select = select TEMP;
    $template->interpret_and_print();
    close TEMP;
    select $prev_select;
 
-   my $result = `cat /tmp/template_test`;
+   my $result = `cat $file`;
    unlink $file or die $!;
 
    print ("--$TEST_NUM--\n$raw_text\n--$TEST_NUM--\n$result\n") if $debug;
 
-   &report_result( $result eq $cooked_text );
+   &report( $result eq $cooked_text );
 }
 
 sub TExport::func1 {

@@ -2,25 +2,27 @@ package Text::FillIn;
 use Carp;
 use FileHandle;
 use strict;
-use vars ('$LEFT_DELIM', '$RIGHT_DELIM', '%HOOK', '@TEMPLATE_PATH');
-$Text::FillIn::VERSION = '0.01';
+use vars qw($VERSION %DEFAULT);
+$VERSION = '0.03';
 
-
-$LEFT_DELIM  ||= '[[';
-$RIGHT_DELIM ||= ']]';
-
-$HOOK{'$'} ||= \&find_value;
-$HOOK{'&'} ||= \&run_function;
-
-@TEMPLATE_PATH = ('.') unless defined @TEMPLATE_PATH;
+# Set a bunch of defaults
+%DEFAULT = (
+	'path' => ['.'],
+	'$hook' => \&find_value,
+	'&hook' => \&run_function,
+	'Ldelim' => '[[',
+	'Rdelim' => ']]',
+	'text' => '',
+	'properties' => {},
+);
 
 sub new {
 	my $package = shift;
 	my $text = shift;
-		
+	
 	my $self = {
+		%DEFAULT,
 		'text' => $text,
-		'properties' => {},
 	};
 	
 	return bless ($self, $package);
@@ -29,7 +31,6 @@ sub new {
 sub get_file {
 	my $self = shift;
 	my $file = shift;
-	my ($realfile, $dir, @file, $fh);
 	
 	if ($file eq 'null') {
 		$self->{'text'} = '';
@@ -37,10 +38,11 @@ sub get_file {
 	}
 	
 	# Find out what file to open:
+	my $realfile;
 	if ($file =~ /^\//) {
 		$realfile = $file;
 	} else {
-		foreach $dir (@TEMPLATE_PATH) {
+		foreach my $dir ($self->path()) {
 			if ( -f "$dir/$file" ) {
 				$realfile = "$dir/$file";
 				last;
@@ -49,12 +51,12 @@ sub get_file {
 	}
 
 	unless ($realfile  and  -f $realfile) {
-		warn ("Can't find file '$file' in @TEMPLATE_PATH");
+		warn ("Can't find file '$file' in (@{[$self->path()]})");
 		return 0;
 	}
 
-	
-	unless ( defined ($fh = new FileHandle($realfile)) ) {
+	my $fh = new FileHandle($realfile);
+	unless ( defined $fh ) {
 		warn ("Can't open $realfile: $!");
 		$self->{'text'} = '';
 		return 0;
@@ -64,6 +66,37 @@ sub get_file {
 	return 1;
 }
 
+sub Ldelim { my $s = shift; $s->_prop('Ldelim', @_) }
+sub Rdelim { my $s = shift; $s->_prop('Rdelim', @_) }
+sub text   { my $s = shift; $s->_prop('text',   @_) }
+
+sub hook {
+	my $self = shift;
+	my $char = shift;
+	return $self->_prop($char.'hook', @_);
+}
+
+sub path {
+	my $self = shift;
+	return @{ (@_ ? $self->_prop('path', [@_]) : $self->_prop('path')) };
+}
+
+
+sub _prop {
+	my $self = shift;
+	my $prop = shift;
+	
+	# Which SV we should get or set - this object only, or the default
+	my $get_set = (ref $self ? \($self->{$prop}) : \($DEFAULT{$prop}));
+	
+	if (@_) {
+		# Set the property
+		$$get_set = shift;
+	}
+	return $$get_set;
+}
+
+# Deprecated - use text()
 sub set_text {
 	my $self = shift;
 	my $text = shift;
@@ -71,6 +104,7 @@ sub set_text {
 	$self->{'text'} = $text;
 }
 
+# Deprecated - use text()
 sub get_text {
 	my $self = shift;
 	
@@ -79,15 +113,29 @@ sub get_text {
 
 sub interpret {
 	my $self = shift;
-	return &_interpret_engine($self->{'text'}, 'collect');
+	$self->_interpret_engine('collect');
 }
 
 sub interpret_and_print {
 	my $self = shift;
-	
-	return &_interpret_engine($self->{'text'}, 'print');
+	$self->_interpret_engine('print');
 }
 
+sub property {
+	my $self = shift;
+	my $prop = shift;
+	
+	# Which SV we should get or set - this object only, or the default
+	my $get_set = (ref $self ? \($self->{'properties'}{$prop}) : \($DEFAULT{'properties'}{$prop}));
+	
+	if (@_) {
+		# Set the property
+		$$get_set = shift;
+	}
+	return $$get_set;
+}
+
+# Deprecated
 sub get_property {
 	my $self = shift;
 	my $prop_name = shift;
@@ -95,6 +143,7 @@ sub get_property {
 	return $self->{'properties'}->{$prop_name};
 }
 
+# Deprecated
 sub set_property {
 	my $self = shift;
 	my $prop_name = shift;
@@ -118,41 +167,42 @@ sub _deal_with {
 
 sub _interpret_engine {
 
-	my $text = shift;
+	my $self = shift;
 	my $style = shift;
 	my ($first_right, $first_left, $last_left, $out_text, $save);
 	my $debug = 0;
-	my $debug2 = 0;
+	my $text = $self->{'text'};   # Duplicates memory, I'll clean up later
 	
-	my $LEFT_DELIM_RX  = quotemeta($LEFT_DELIM);
-	my $RIGHT_DELIM_RX  = quotemeta($RIGHT_DELIM);
+	my ($ld, $rd) = ($self->Ldelim(), $self->Rdelim());
+	warn "Delimiters are $ld and $rd" if $debug;
 
 	while (1) {
 
-		print STDERR ("interpreting '$text'\n") if $debug;
+		warn ("interpreting '$text'") if $debug;
 		# Shave off any leading plain text before the first real [[
 		my ($prelength, $pretext);
-		$first_left = &_real_index($text, $LEFT_DELIM_RX);
-		print STDERR ("first left is at $first_left\n") if $debug;
+		$first_left = &_real_index($text, $ld);
+		warn ("first left is at $first_left") if $debug;
 		if ( $first_left == -1 ) {
 			# No more to do, just spit out the text
-			&_unquote(\$text);
+			$self->_unquote(\$text);
 			&_deal_with($text, $style, \$out_text);
 			last;
 			
 		} elsif ($first_left > 0) { # There's a real [[ here
 			$pretext = substr($text, 0, $first_left);
-			&_unquote(\$pretext);
+			$self->_unquote(\$pretext);
 			&_deal_with($pretext, $style, \$out_text);
 			substr($text, 0, $first_left) = '';
 			next;
 		}
 		
+		# There's now a real [[ at position 0.
 		# Find the first right delimiter and fill in before it:
-		$first_right = &_real_index($text, $RIGHT_DELIM_RX);
-		print STDERR ("first right is at $first_right\n") if $debug;
-		$last_left = &_real_index(substr($text, 0, $first_right), $LEFT_DELIM_RX, 1);
-		print STDERR ("last left is at $last_left\n") if $debug;
+		$first_right = &_real_index($text, $rd);
+		warn ("first right is at $first_right") if $debug;
+		$last_left = &_real_index(substr($text, 0, $first_right), $ld, 1);
+		warn ("last left is at $last_left") if $debug;
 		
 		if ($first_right == -1) { # Something's amiss, abort
 			warn ("Problem interpreting text " . substr($text, 0, $first_right));
@@ -160,8 +210,8 @@ sub _interpret_engine {
 			last;
 		}
 		# Fill in the text in between the first right delimiter and the last left delimiter before it:
-		substr($text, $last_left, $first_right - $last_left + 2) =
-		   &_do_interpret(substr($text, $last_left, $first_right - $last_left + 2));
+		substr($text, $last_left, $first_right - $last_left + length($rd)) =
+		   $self->_do_interpret(substr($text, $last_left, $first_right - $last_left + length($rd)));
 	}
 	return $out_text;
 }
@@ -175,14 +225,14 @@ sub _real_index {
 	my $last = shift;
 	
 	if ($last) {
-		if ($text =~ / (.*)(^|[^\\])$exp /xs) {
+		if ($text =~ /  (.*)(^|[^\\]) \Q$exp/sx) {
 			return(length($1) + length($2));
 		} else {
 			return -1;
 		}
 	} else {
-		if ($text =~ /(.*?)(^|[^\\])$exp/s) {
-			return (length($1) + length($2)); #`
+		if ($text =~ / (.*?)(^|[^\\]) \Q$exp/sx) {
+			return (length($1) + length($2));
 		} else {
 			return -1;
 		}
@@ -190,30 +240,30 @@ sub _real_index {
 }
 
 sub _unquote {
+	my $self = shift;
 	my $textref = shift;
 	
-	my $RIGHT_DELIM_RX = quotemeta($RIGHT_DELIM);
-	my $LEFT_DELIM_RX  = quotemeta($LEFT_DELIM);
-	
-	${$textref} =~ s/ \\($RIGHT_DELIM_RX|$LEFT_DELIM_RX) /$1/xgs;
+	${$textref} =~ s/ \\( \Q$self->{'Rdelim'}\E | \Q$self->{'Ldelim'}\E ) /$1/xgs;
 }
 
 sub _do_interpret {
+	my $self = shift;
 	my $string = shift;
 	
-	my $RIGHT_DELIM_RX = quotemeta($RIGHT_DELIM);
-	my $LEFT_DELIM_RX  = quotemeta($LEFT_DELIM);
+	my ($ldx, $rdx) = map {quotemeta} ($self->{'Ldelim'}, $self->{'Rdelim'});
 	
-	unless ($string =~ /^ $LEFT_DELIM_RX \s*  ([\W])  (.*?) \s*  $RIGHT_DELIM_RX $/sx ) {
+	unless ($string =~ /^ $ldx \s*  ([\W])  (.*?) \s*  $rdx $/sx ) {
 		# Looks like we weren't meant to see this - but we can't interpret it again either
 		carp ("Can't interpret template chunk '$string'");
-		return '';
+		return;
 	}
+	my ($char, $guts) = ($1, $2);
 	
 	no strict('refs');  # Allow symbolic name substitution for a little while
 	
-	if ($HOOK{$1}) {
-		return &{$HOOK{$1}}($2);
+	my $hook;
+	if (defined ($hook = $self->hook($char))) {
+		return &{$hook}($guts, $char);
 	} else {
 		croak ("No interpret hook defined for type '$1'");
 	}
@@ -227,8 +277,9 @@ sub find_value { $main::TVars{ $_[0] } }
 
 sub run_function {
    # Usage: $result = &run_function("some_function(param1,param2,param3)");
-   my ($function_name, $args) = $_[0] =~ /(\w+)\((.*)\)/
-      or die ("Can't understand function call '$_[0]'");
+	my $text = shift;
+   my ($function_name, $args) = $text =~ /(\w+)\((.*)\)/
+      or die ("Can't understand function call '$text'");
 	no strict('refs');  # Allow symbolic name substitution for a little while
    return &{"TExport::$function_name"}( split(/,/, $args) );
 }
@@ -246,16 +297,17 @@ Text::FillIn.pm - a class implementing a fill-in template
 =head1 SYNOPSIS
 
  use Text::FillIn;
-
- $Text::FillIn::HOOK{'$'} = sub { return ${$_[0]} };  # Hard reference
- $Text::FillIn::HOOK{'&'} = "main::run_function";     # Symbolic reference
+ 
+ # Set the functions to do the filling-in:
+ Text::FillIn->hook('$', sub { return ${$_[0]} });  # Hard reference
+ Text::FillIn->hook('&', "main::run_function");     # Symbolic reference
  sub run_function { return &{$_[0]} }
-
+ 
  $template = new Text::FillIn('some text with [[$variables]] and [[&routines]]');
  $filled_in = $template->interpret();  # Returns filled-in template
  print $filled_in;
  $template->interpret_and_print();  # Prints template to currently selected filehandle
-
+ 
  # Or
  $template = new Text::FillIn();
  $template->set_text('the text is [[ $[[$var1]][[$var2]] ]]');
@@ -263,14 +315,14 @@ Text::FillIn.pm - a class implementing a fill-in template
  $TVars{'var2'} = 'parter';
  $TVars{'two_parter'} = 'interpreted';
  $template->interpret_and_print();  # Prints "the text is interpreted"
-
+ 
  # Or
  $template = new Text::FillIn();
  $template->get_file('/etc/template_dir/my_template');  # Fetches a file
-
+ 
  # Or
  $template = new Text::FillIn();
- @Text::FillIn::TEMPLATE_PATH = ('.', '/etc/template_dir');  # Where to find templates
+ $template->path('.', '/etc/template_dir');  # Where to find templates
  $template->get_file('my_template'); # Gets ./my_template or /etc/template_dir/my_template
 
 =head1 DESCRIPTION
@@ -281,10 +333,13 @@ uses you might think of.  B<Text::FillIn> provides handy methods for fetching fi
 from the disk, printing a template while interpreting it (also called streaming),
 and nested fill-in sections (i.e. expressions like [[ $th[[$thing2]]ing1 ]] are legal).
 
-Note that the version number here is 0.02 - that means that the interface may change
-a bit - in particular, the interfaces for accessing the $LEFT_DELIM, $RIGHT_DELIM, 
-%HOOK, and @TEMPLATE_PATH variables is probably a little unpredictable in future versions
-(see TO_DO below).  I might also change the default HOOKs or something.
+Note that the version number here is 0.03 - that means that the interface may change
+a bit.  In fact, it's already changed some with respect to 0.02 (see the CHANGES file).
+In particular, the $LEFT_DELIM, $RIGHT_DELIM, %HOOK, and @TEMPLATE_PATH variables are 
+gone, replaced by a default/instance variable system.
+
+I might also change the default hooks or something.  Please read the CHANGES file before upgrading
+to find out whether I've changed anything you use.
 
 In this documentation, I generally use "template" to mean "an object of class Text::FillIn".
 
@@ -301,8 +356,8 @@ The delimiters that set fill-in sections of your form apart from the rest of the
 form are generally B<[[> and B<]]>, but they don't have to be, you can set 
 them to whatever you want.  So you could do this:
 
- $Text::FillIn::LEFT_DELIM  = '{';
- $Text::FillIn::RIGHT_DELIM = '}';
+ Text::FillIn->Ldelim = '{';
+ Text::FillIn->Rdelim = '}';
  $template->set_text('this is a {$variable} and this is a {&function}.');
 
 Whatever you set the delimiter to, you can put backslashes before them in your
@@ -322,8 +377,8 @@ different kinds of [[tags]] it finds.  The way it accomplishes this is through
 when confronted with various kinds of fill-in fields.  There are two 
 hooks provided by default:
 
- $HOOK{'$'} ||= \&find_value;
- $HOOK{'&'} ||= \&run_function;
+ Text::FillIn->hook('$') is \&find_value,
+ Text::FillIn->hook('&') is \&run_function.
 
 So if you leave these hooks the way they are, when B<Text::FillIn> sees
 some text like "some [[$vars]] and some [[&funk]]", it will run
@@ -333,8 +388,8 @@ is based on the first non-whitespace character after the delimiter,
 which is required to be a non-word character (no letters, numbers, or
 underscores).  You can define hooks for any non-word character you want:
 
- $Text::FillIn::HOOK{'!'} = "main::scream_it";  # or \&scream_it
  $template = new Text::FillIn("some [[!mushrooms]] were in my shoes!");
+ $template->hook('!', "main::scream_it");  # or \&scream_it
  sub scream_it {
     my $text = shift;
     return uc($text); # Uppercase-it
@@ -344,7 +399,7 @@ underscores).  You can define hooks for any non-word character you want:
 
 Every hook function will be passed all the text between the delimiters, without
 any surrounding whitespace or the leading identifier (the & or $, or whatever).
-Values in %Text::FillIn::HOOK can be either hard references or symbolic references,
+Hooks can be given as either hard references or symbolic references,
 but if they are symbolic, they need to use the complete package name and everything.
 
 =item * the default hook functions
@@ -403,26 +458,26 @@ creativity or anything.  I now include hook functions because the ones I give
 will probably work okay for most people, and providing them means it's easier
 to use the module right out of "the box."  But I hope you won't be afraid to write
 your own hooks - if mine don't work well for you, by all means go ahead and
-replace them with your own.
+replace them with your own.  If you think you've written some really killer hooks,
+let me know.  I may include cool ones with future distributions.
 
 
 =item * template directories
 
-Set @Text::FillIn::TEMPLATE_PATH in your script to point to 
-directories with templates in them:
+You can tell C<Text::FillIn> where to look for templates:
 
- @Text::FillIn::TEMPLATE_PATH = ('.', '/etc/template_dir')
+ Text::FillIn->path('.', '/etc/template_dir');
  $template->get_file('my_template'); # Gets ./my_template or /etc/template_dir/my_template
 
 =back
 
 
 
-=head2 Methods
+=head1 METHODS
 
 =over 4
 
-=item * new Text::FillIn()
+=item * new Text::FillIn($text)
 
 This is the constructor, which means it returns a new object of type B<Text::FillIn>.
 If you feed it some text, it will set the template's text to be what you give it:
@@ -432,18 +487,14 @@ If you feed it some text, it will set the template's text to be what you give it
 =item * $template->get_file( $filename );
 
 This will look for a template called $filename (in the directories given in 
-B<@Text::FillIn::TEMPLATE_PATH>) and slurp it in.  If $filename starts with / , 
+B<$template-E<gt>path()>) and slurp it in.  If $filename starts with / , 
 then B<Text::FillIn> will treat $filename as an absolute path, and not search 
 through the directories for it:
 
  $template->get_file( "my_template" );
  $template->get_file( "/weird/place/with/template" );
 
-=item * $template->set_text($new_text)
-
-=item * $template->get_text()
-
-These two functions let you access the text of the template.  
+The default path is ('.').
 
 =item * $template->interpret()
 
@@ -466,21 +517,49 @@ it will print stuff1, then the value of [[thing1]], then stuff2, then the
 value of [[thing2]].  This is as streamed as possible if you want nested
 brackets to resolve correctly.
 
-=item * $template->get_property( $name );
+=back
 
-=item * $template->set_property( $name, $value );
+The following methods all get and/or set certain attributes of the template.  They can
+all be called as instance methods, a la C<$template-E<gt>Ldelim()>, or as static methods,
+a la C<Text::FillIn-E<gt>Ldelim()>.  Using an instance method only changes the given
+template, it does not affect the properties of any other template.  Using a static method
+will change the default behavior of all templates created in the future.
 
-These two methods let you set arbitrary properties of the template, like
+=over 4
+
+=item * $template->Ldelim($new_delimiter)
+
+=item * $template->Rdelim($new_delimiter)
+
+Get or set the left or right delimiter.  When called with no arguments, simply returns the
+delimiter.  When called with an argument, sets the delimiter.
+
+=item * $template->text($new_text)
+
+Get or set the contents of the template.
+
+=item * $template->path($dir1, $dir2, ...)
+
+Get or set the list of directories to search for templates in.  The path is used
+in the get_file() method.
+
+=item * $template->hook($character, $hook_function)
+
+Set the functions for filling in the sections of the template between delimiters.  See 
+the subsection on interpretation hooks in the DESCRIPTION section.
+
+=item * $template->property( $name, $value );
+
+This method lets you get and set arbitrary properties of the template, like
 this:
 
- $template->set_property('color', 'blue');
+ $template->property('color', 'blue');  # Set the color
  # ... some code...
- $color = $template->get_property('color');
+ $color = $template->property('color'); # Get the color
 
 The B<Text::FillIn> class doesn't actually pay any attention whatsoever to
 the properties - it's purely for your own convenience, so that small changes
-in functionality can be achieved in an object-oriented way without having to
-subclass B<Text::FillIn>.
+in functionality can be achieved without having to subclass B<Text::FillIn>.
 
 =back
 
@@ -499,26 +578,22 @@ probably what you wanted.
 
 =head1 TO DO
 
-=over 4
+The deprecated methods get_text(), set_text(), get_property(), and set_property()
+will be removed in version 0.05 and greater.  Use text() and property() instead.
 
-=item *
+At the suggestion of Jesse Chisolm, I plan on making it possible to specify a class
+object that has the hook functions as methods.  I'm still thinking about how the 
+interface will work.
 
-Use autosplit or the SelfLoader module so little used or newly added
-functions won't be a burden to programs which don't use them. 
+ Idea for the above:
+ $template->class($class);  # Can be object, or class name
+ $template->hook('$', 'method_in_class');
 
-=item *
+=head1 BUGS
 
-Make the module more friendly to being sub-classed, in particular by
-changing the method for accessing the %HOOK, $RIGHT_DELIM, $LEFT_DELIM, and
-@TEMPLATE_PATH variables.
-
-=item *
-
-Think about writing some of the code in C as an extension.  I don't know how
-to do this kind of stuff yet, so I haven't - and I don't know whether it's
-a good idea either.
-
-=back
+The interpreting engine can be fooled by certain backslashing sequences like C<\\[[$var]]>,
+which looks to it like the C<[[> is backslashed.  I think I know how to fix this, but I need 
+to think about it a little.
 
 =head1 AUTHOR
 
