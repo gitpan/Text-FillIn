@@ -3,17 +3,18 @@ use Carp;
 use FileHandle;
 use strict;
 use vars qw($VERSION %DEFAULT);
-$VERSION = '0.03';
+$VERSION = '0.04';
 
 # Set a bunch of defaults
 %DEFAULT = (
 	'path' => ['.'],
-	'$hook' => \&find_value,
-	'&hook' => \&run_function,
+	'$hook' => 'find_value',
+	'&hook' => 'run_function',
 	'Ldelim' => '[[',
 	'Rdelim' => ']]',
 	'text' => '',
 	'properties' => {},
+	'object' => undef,
 );
 
 sub new {
@@ -69,6 +70,7 @@ sub get_file {
 sub Ldelim { my $s = shift; $s->_prop('Ldelim', @_) }
 sub Rdelim { my $s = shift; $s->_prop('Rdelim', @_) }
 sub text   { my $s = shift; $s->_prop('text',   @_) }
+sub object { my $s = shift; $s->_prop('object', @_) }
 
 sub hook {
 	my $self = shift;
@@ -81,19 +83,29 @@ sub path {
 	return @{ (@_ ? $self->_prop('path', [@_]) : $self->_prop('path')) };
 }
 
-
-sub _prop {
+sub property {
 	my $self = shift;
 	my $prop = shift;
 	
 	# Which SV we should get or set - this object only, or the default
-	my $get_set = (ref $self ? \($self->{$prop}) : \($DEFAULT{$prop}));
+	my $get_set = (ref $self ? \($self->{'properties'}{$prop}) : \($DEFAULT{'properties'}{$prop}));
 	
 	if (@_) {
 		# Set the property
 		$$get_set = shift;
 	}
 	return $$get_set;
+}
+
+
+sub interpret {
+	my $self = shift;
+	$self->_interpret_engine('collect');
+}
+
+sub interpret_and_print {
+	my $self = shift;
+	$self->_interpret_engine('print');
 }
 
 # Deprecated - use text()
@@ -111,31 +123,7 @@ sub get_text {
 	return $self->{'text'};
 }
 
-sub interpret {
-	my $self = shift;
-	$self->_interpret_engine('collect');
-}
-
-sub interpret_and_print {
-	my $self = shift;
-	$self->_interpret_engine('print');
-}
-
-sub property {
-	my $self = shift;
-	my $prop = shift;
-	
-	# Which SV we should get or set - this object only, or the default
-	my $get_set = (ref $self ? \($self->{'properties'}{$prop}) : \($DEFAULT{'properties'}{$prop}));
-	
-	if (@_) {
-		# Set the property
-		$$get_set = shift;
-	}
-	return $$get_set;
-}
-
-# Deprecated
+# Deprecated - use property()
 sub get_property {
 	my $self = shift;
 	my $prop_name = shift;
@@ -143,7 +131,7 @@ sub get_property {
 	return $self->{'properties'}->{$prop_name};
 }
 
-# Deprecated
+# Deprecated - use property()
 sub set_property {
 	my $self = shift;
 	my $prop_name = shift;
@@ -155,6 +143,20 @@ sub set_property {
 
 
 ############################# Private functions
+
+sub _prop {
+	my $self = shift;
+	my $prop = shift;
+	
+	# Which SV we should get or set - this object only, or the default
+	my $get_set = (ref $self ? \($self->{$prop}) : \($DEFAULT{$prop}));
+	
+	if (@_) {
+		# Set the property
+		$$get_set = shift;
+	}
+	return $$get_set;
+}
 
 sub _deal_with {
 	my ($text, $style, $outref) = @_;
@@ -243,14 +245,15 @@ sub _unquote {
 	my $self = shift;
 	my $textref = shift;
 	
-	${$textref} =~ s/ \\( \Q$self->{'Rdelim'}\E | \Q$self->{'Ldelim'}\E ) /$1/xgs;
+	my ($ldx, $rdx) = map {quotemeta} ($self->Ldelim(), $self->Rdelim());
+	${$textref} =~ s/ \\( $ldx | $rdx ) /$1/xgs;
 }
 
 sub _do_interpret {
 	my $self = shift;
 	my $string = shift;
 	
-	my ($ldx, $rdx) = map {quotemeta} ($self->{'Ldelim'}, $self->{'Rdelim'});
+	my ($ldx, $rdx) = map {quotemeta} ($self->Ldelim(), $self->Rdelim());
 	
 	unless ($string =~ /^ $ldx \s*  ([\W])  (.*?) \s*  $rdx $/sx ) {
 		# Looks like we weren't meant to see this - but we can't interpret it again either
@@ -259,11 +262,14 @@ sub _do_interpret {
 	}
 	my ($char, $guts) = ($1, $2);
 	
-	no strict('refs');  # Allow symbolic name substitution for a little while
-	
-	my $hook;
+	my ($hook, $object);
 	if (defined ($hook = $self->hook($char))) {
-		return &{$hook}($guts, $char);
+		no strict('refs');  # Allow symbolic name substitution for a little while
+		if (defined ($object = $self->object())) {
+			return $object->$hook($guts, $char);
+		} else {
+			return &{$hook}($guts, $char);
+		}
 	} else {
 		croak ("No interpret hook defined for type '$1'");
 	}
@@ -303,10 +309,11 @@ Text::FillIn.pm - a class implementing a fill-in template
  Text::FillIn->hook('&', "main::run_function");     # Symbolic reference
  sub run_function { return &{$_[0]} }
  
- $template = new Text::FillIn('some text with [[$variables]] and [[&routines]]');
+ $template = new Text::FillIn('some text with [[$vars]] and [[&routines]]');
  $filled_in = $template->interpret();  # Returns filled-in template
  print $filled_in;
- $template->interpret_and_print();  # Prints template to currently selected filehandle
+ $template->interpret_and_print();  # Prints template to currently 
+                                    # selected filehandle
  
  # Or
  $template = new Text::FillIn();
@@ -323,7 +330,8 @@ Text::FillIn.pm - a class implementing a fill-in template
  # Or
  $template = new Text::FillIn();
  $template->path('.', '/etc/template_dir');  # Where to find templates
- $template->get_file('my_template'); # Gets ./my_template or /etc/template_dir/my_template
+ $template->get_file('my_template'); # Gets ./my_template or 
+                                     # /etc/template_dir/my_template
 
 =head1 DESCRIPTION
 
@@ -333,7 +341,7 @@ uses you might think of.  B<Text::FillIn> provides handy methods for fetching fi
 from the disk, printing a template while interpreting it (also called streaming),
 and nested fill-in sections (i.e. expressions like [[ $th[[$thing2]]ing1 ]] are legal).
 
-Note that the version number here is 0.03 - that means that the interface may change
+Note that the version number here is 0.04 - that means that the interface may change
 a bit.  In fact, it's already changed some with respect to 0.02 (see the CHANGES file).
 In particular, the $LEFT_DELIM, $RIGHT_DELIM, %HOOK, and @TEMPLATE_PATH variables are 
 gone, replaced by a default/instance variable system.
@@ -356,16 +364,16 @@ The delimiters that set fill-in sections of your form apart from the rest of the
 form are generally B<[[> and B<]]>, but they don't have to be, you can set 
 them to whatever you want.  So you could do this:
 
- Text::FillIn->Ldelim = '{';
- Text::FillIn->Rdelim = '}';
- $template->set_text('this is a {$variable} and this is a {&function}.');
+ Text::FillIn->Ldelim('{');
+ Text::FillIn->Rdelim('}');
+ $template->set_text('this is a {$variable} and a {&function}.');
 
 Whatever you set the delimiter to, you can put backslashes before them in your
-templates, to force them not to be interpreted:
+templates, to force them to be interpreted as literals:
 
- $template->set_text('some [[$[[$var2]][[$var]]]] and some \[[ text \]]');
+ $template->set_text('some [[$[[$var2]][[$var]]]] and \[[ text \]]');
  $template->interpret_and_print();
- # Prints "some stuff and some [[ text ]]"
+ # Prints "some stuff and [[ text ]]"
 
 You cannot currently have several different kinds of delimiters in a single template.
 
@@ -401,6 +409,12 @@ Every hook function will be passed all the text between the delimiters, without
 any surrounding whitespace or the leading identifier (the & or $, or whatever).
 Hooks can be given as either hard references or symbolic references,
 but if they are symbolic, they need to use the complete package name and everything.
+
+Beginning in version 0.04, you may use some object's methods as hook functions.  For
+example, if you have a template C<$template> and another object C<$myObj>, you can 
+instruct C<$template> to call C<$myObj-E<gt>find_value()> and 
+C<$myObj-E<gt>run_function()> to fill in templates.  See the C<$template-E<gt>object()> 
+method below.
 
 =item * the default hook functions
 
@@ -525,6 +539,11 @@ a la C<Text::FillIn-E<gt>Ldelim()>.  Using an instance method only changes the g
 template, it does not affect the properties of any other template.  Using a static method
 will change the default behavior of all templates created in the future.
 
+I think I need to reserve the right to change what happens when you create a template
+$t, then change the default behavior of all templates, then call $t->interpret() -- 
+should it use the new defaults or the old defaults?  Currently it uses the old
+defaults, but that might change.
+
 =over 4
 
 =item * $template->Ldelim($new_delimiter)
@@ -545,8 +564,25 @@ in the get_file() method.
 
 =item * $template->hook($character, $hook_function)
 
-Set the functions for filling in the sections of the template between delimiters.  See 
-the subsection on interpretation hooks in the DESCRIPTION section.
+Get or set the functions for filling in the sections of the template between delimiters.  
+The first argument is the non-word character the hook is installed under.  The second
+argument, if present, is the function to install as a hook.  It may either be a
+hard reference to a function, a string containing the fully package-qualified
+name of a function, or if you're using objects to fill in your template, a method name.
+See also the subsection on interpretation hooks in the DESCRIPTION section.
+
+=item * $template->object($obj)
+
+As of version 0.04, you may use method calls on an arbitrary object as
+template hooks.  This can be very powerful.  Your code might look like this:
+
+ $t   = new Text::FillIn("some [[$animal]]s");
+ $obj = new MyClass(animal=>'chicken');  # Create some object
+ $t->object($obj);  # Tell $t to use methods of $obj as hooks
+ $t->hook('$', 'lookup_var');  # Set the method name for '$'
+ $t->interpret_and_print();  # Calls $obj->lookup_var()
+
+The object methods will be passed the same arguments as regular (static) hook functions.
 
 =item * $template->property( $name, $value );
 
@@ -573,7 +609,7 @@ then try to interpret C<[[$var_number_]]>, which probably won't work.
 
 The solution is to make &get_number I<return> its number rather than I<print> it.  
 Then B<Text::FillIn> will turn C<[[$var_number_[[&get_number]]]]> into 
-C<[[$var_number_5]]>, and then print the value of $var_number_5.  That's 
+C<[[$var_number_5]]>, and then print the value of C<$var_number_5>.  That's 
 probably what you wanted.
 
 =head1 TO DO
@@ -581,13 +617,13 @@ probably what you wanted.
 The deprecated methods get_text(), set_text(), get_property(), and set_property()
 will be removed in version 0.05 and greater.  Use text() and property() instead.
 
-At the suggestion of Jesse Chisolm, I plan on making it possible to specify a class
-object that has the hook functions as methods.  I'm still thinking about how the 
-interface will work.
-
- Idea for the above:
- $template->class($class);  # Can be object, or class name
- $template->hook('$', 'method_in_class');
+By slick use of local() variables, it would be possible to have Text::FillIn keep track of when 
+it's doing nested tags and when it's not, allowing the user to nest tags using arbitrary
+depth and not have to worry about the above "common mistake."  This would let hook
+functions be oblivious to whether they're supposed to print their results or return them,
+since Text::FillIn would keep track of it all.  This will take some doing on my part, 
+but it's not insurmountable.  It would probably involve evaluating the tags from
+the outside in, rather than the inside out.
 
 =head1 BUGS
 

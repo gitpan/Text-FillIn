@@ -6,7 +6,7 @@
 # Change 1..1 below to 1..last_test_to_print .
 # (It may become useful if the test is moved to ./t subdirectory.)
 
-BEGIN { $| = 1; print "1..24\n"; }
+BEGIN { $| = 1; print "1..25\n"; }
 END {print "not ok 1\n" unless $loaded;}
 use Text::FillIn;
 $loaded = 1;
@@ -63,19 +63,31 @@ $TVars{'text\\]]'} = 'garbage';
 # 20,21
 &test_both('Pi is about [[&add_numbers(3,.1,.04,.001,.0006)]]' => 'Pi is about 3.1416');
 
-# 22,24
+# 22,23,24
 {
 	my $t = new Text::FillIn('some [[$var} unbalanced');
 	$t->Rdelim('}');
-	&report($t->interpret() eq 'some text unbalanced');
+	&should_equal($t->interpret(), 'some text unbalanced');
 
 	$t = new Text::FillIn('some {$var]] unbalanced');
 	$t->Ldelim('{');
-	&report($t->interpret() eq 'some text unbalanced');
+	&should_equal($t->interpret(), 'some text unbalanced');
 	
 	Text::FillIn->Ldelim('(');
 	$t = new Text::FillIn('some ($var]] unbalanced');
-	&report($t->interpret() eq 'some text unbalanced');
+	&should_equal($t->interpret(), 'some text unbalanced');
+	Text::FillIn->Ldelim('[[');
+	Text::FillIn->Rdelim(']]');
+}
+
+# 25
+{
+	my $obj = bless {thing=>5}, 'MyPack';
+	sub MyPack::find_value { my $s = shift; $s->{shift()} }
+
+	my $t = new Text::FillIn('some [[$thing]] is 5');
+	$t->object($obj);
+	&should_equal($t->interpret(), 'some 5 is 5');
 }
 
 ###################################################################
@@ -86,14 +98,10 @@ sub test_both {
 }
 
 sub test_interpret {
-   my $debug = 0;
    my ($raw_text, $cooked_text) = @_;
-   my $template = new Text::FillIn($raw_text);
-   my $result = $template->interpret;
+   my $result = Text::FillIn->new($raw_text)->interpret();
 
-   print ("--$TEST_NUM--\n$raw_text\n--$TEST_NUM--\n$result\n") if $debug;
-
-   &report( $result eq $cooked_text );
+   &should_equal($result, $cooked_text);
 }
 
 sub test_print {
@@ -110,10 +118,16 @@ sub test_print {
 
    my $result = `cat $file`;
    unlink $file or die $!;
+   
+   &should_equal($result, $cooked_text);
+}
 
-   print ("--$TEST_NUM--\n$raw_text\n--$TEST_NUM--\n$result\n") if $debug;
-
-   &report( $result eq $cooked_text );
+sub should_equal {
+	my ($one, $two) = @_;
+	&report($one eq $two);
+	if ($one ne $two  and  $ENV{TEST_VERBOSE}) {
+		print STDERR "$one =/= $two\n";
+	}
 }
 
 sub TExport::func1 {

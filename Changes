@@ -1,7 +1,14 @@
 Revision history for Perl extension Text::FillIn.
 
-0.03
-   There are Significant Changes in the Interface.
+0.04  Sun Oct  4 00:22:55 CDT 1998
+   - Added support for using another object's method calls as interpretation
+     hooks.  Potentially powerful feature suggested by Jesse Chisolm.
+   - Please note that the get_text(), set_text(), get_property(), and
+     set_property() methods will go away in version 0.05.  Migrate
+     to text() and property().
+
+0.03  Thu Oct  1 20:46    EDT 1998
+   There are Significant Changes In The Interface.
    - The default delimiters, hooks, and path now have accessor functions.
    - One can now set the delimiters, hooks, and path for an instance of
      a template without affecting the default, or other templates.
