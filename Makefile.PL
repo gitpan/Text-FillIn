@@ -4,4 +4,5 @@ use ExtUtils::MakeMaker;
 WriteMakefile(
     'NAME'	=> 'Text::FillIn',
     'VERSION_FROM' => 'FillIn.pm', # finds $VERSION
+    'dist' => { COMPRESS=>"gzip", SUFFIX=>"gz" },
 );

@@ -1,5 +1,11 @@
 Revision history for Perl extension Text::FillIn.
 
+0.02  Fri May 22 15:18:28 1998
+   - included two basic hook functions in the distribution
+   - moved TEST_SUITE out of docs, into 'make test' tests
+   - separated POD and Perl - POD is at the end of file now, not interspersed
+
+
 0.01  Tue Mar 24 17:32:35 1998
-	- original version; created by h2xs 1.18
+   - original version; created by h2xs 1.18
 
