@@ -1,0 +1,22 @@
+Hi,
+
+This is the Text::FillIn.pm module, version 0.01 (but check $VERSION in
+FillIn.pm just to make sure).  It is a class for implementing fill-in text
+templates.  It is designed to be flexible and sub-classible.
+
+It also may change significantly - this is only version 0.01, after all =).
+
+For more specific information, please see the documentation inside
+FillIn.pm, by doing "pod2txt FillIn.pm", or "perldoc Text::FillIn" once
+you've installed the module.
+
+To install the module, do the usual:
+
+   perl Makefile.PL
+   make
+   make test
+   make install
+
+Then you can delete the source directory tree since it's no longer needed.
+
+-Ken Williams
