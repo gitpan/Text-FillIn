@@ -3,7 +3,7 @@ use Carp;
 use FileHandle;
 use strict;
 use vars qw($VERSION %DEFAULT);
-$VERSION = '0.04';
+$VERSION = '0.05';
 
 # Set a bunch of defaults
 %DEFAULT = (
@@ -25,6 +25,10 @@ sub new {
 		%DEFAULT,
 		'text' => $text,
 	};
+
+	# Copy the special structures so we don't share their memory
+	$self->{'properties'} = { %{$self->{'properties'}} };
+	$self->{'path'} = [ @{$self->{'path'}} ];
 	
 	return bless ($self, $package);
 }
@@ -615,7 +619,7 @@ probably what you wanted.
 =head1 TO DO
 
 The deprecated methods get_text(), set_text(), get_property(), and set_property()
-will be removed in version 0.05 and greater.  Use text() and property() instead.
+will be removed in version 0.06 and greater.  Use text() and property() instead.
 
 By slick use of local() variables, it would be possible to have Text::FillIn keep track of when 
 it's doing nested tags and when it's not, allowing the user to nest tags using arbitrary

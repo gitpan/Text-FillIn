@@ -1,5 +1,9 @@
 Revision history for Perl extension Text::FillIn.
 
+0.05  Wed Jan  6 00:37:36 EST 1999
+	- Fixed a nasty bug that made some distinct templates share their
+	  'properties' and 'path' attributes.  All users of 0.04 should upgrade.
+
 0.04  Sun Oct  4 00:22:55 CDT 1998
    - Added support for using another object's method calls as interpretation
      hooks.  Potentially powerful feature suggested by Jesse Chisolm.
